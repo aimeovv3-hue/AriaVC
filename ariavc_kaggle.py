@@ -3,9 +3,13 @@ import sys
 import time
 import subprocess
 import shutil
+import warnings
+
+# Ocultar advertencias cosméticas en la consola de Kaggle
+warnings.filterwarnings("ignore")
 
 # ==========================================
-# 1. MOTOR DE ARRANQUE Y PREPARACIÓN (BOOTSTRAP)
+# 1. MOTOR DE ARRANQUE Y PREPARACIÓN
 # ==========================================
 def run_cmd(cmd, desc):
     print(f"\n[AriaVC Setup] => {desc}...")
@@ -16,12 +20,10 @@ def run_cmd(cmd, desc):
         print(f"  [!] Advertencia o error menor en: {desc}")
 
 def setup_environment():
-    """Instala las utilidades del sistema y dependencias antes de arrancar la interfaz."""
     print("========================================")
     print("      🚀 INICIANDO ARIAVC STUDIO        ")
     print("========================================")
     
-    # Crear rutas vitales
     global KAGGLE_WORK_DIR, LOGS_DIR, DATASETS_DIR
     KAGGLE_WORK_DIR = "/kaggle/working"
     LOGS_DIR = os.path.join(KAGGLE_WORK_DIR, "logs")
@@ -29,70 +31,77 @@ def setup_environment():
     os.makedirs(LOGS_DIR, exist_ok=True)
     os.makedirs(DATASETS_DIR, exist_ok=True)
 
-    # Solo instalamos si detectamos que no están (para que reinicios rápidos no tomen horas)
     if not shutil.which("ffmpeg"):
-        run_cmd("apt-get update && apt-get install -y ffmpeg aria2 curl", "Instalando FFmpeg y utilidades de sistema")
+        run_cmd("apt-get update && apt-get install -y ffmpeg aria2 curl", "Instalando utilidades de sistema")
     
     if not shutil.which("lt"):
-        run_cmd("curl -fsSL https://deb.nodesource.com/setup_18.x | bash -", "Configurando repositorio de Node.js")
+        run_cmd("curl -fsSL https://deb.nodesource.com/setup_18.x | bash -", "Configurando Node.js")
         run_cmd("apt-get install -y nodejs", "Instalando Node.js")
-        run_cmd("npm install -g localtunnel", "Instalando Localtunnel para accesos públicos")
+        run_cmd("npm install -g localtunnel", "Instalando Localtunnel")
         
     if not shutil.which("filebrowser"):
         run_cmd("curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash", "Instalando Filebrowser")
 
-    # === DESCARGAR REQUIREMENTS DESDE GITHUB ===
-    github_raw_url = "https://raw.githubusercontent.com/aimeovv3-hue/AriaVC/main/requirements.txt"
-    run_cmd(f"wget -q -O requirements.txt {github_raw_url}", "Descargando requirements.txt desde GitHub")
-
-    if os.path.exists("requirements.txt"):
-        run_cmd(f"{sys.executable} -m pip install -r requirements.txt", "Instalando dependencias de Python (requirements.txt)")
-    else:
-        print("\n[!] No se encontró requirements.txt. Asumiendo que las dependencias ya están instaladas.")
+    # CREAR REQUIREMENTS LOCALMENTE PARA EVITAR EL CACHÉ DE GITHUB
+    dependencias = """gradio>=4.0.0
+torch>=2.0.0
+torchaudio>=2.0.0
+torchvision>=0.15.0
+tensorboard>=2.14.0
+numpy>=1.23.0
+scipy>=1.10.0
+librosa>=0.10.0
+soundfile>=0.12.1
+pydub
+faiss-cpu>=1.7.4
+faiss-gpu>=1.7.4
+requests
+tqdm
+torchcrepe>=0.0.20
+fairseq>=0.12.2
+transformers>=4.35.0
+accelerate>=0.24.0"""
+    
+    with open("requirements_local.txt", "w") as f:
+        f.write(dependencias)
+        
+    run_cmd(f"{sys.executable} -m pip install -r requirements_local.txt", "Instalando dependencias (requirements_local.txt)")
 
 # ==========================================
 # 2. APLICACIÓN PRINCIPAL (INTERFAZ GRADIO)
 # ==========================================
 def launch_ui():
-    """Importa Gradio y lanza la interfaz solo DESPUÉS de que el entorno esté listo."""
     print("\n[AriaVC] Cargando la interfaz gráfica...")
     import gradio as gr
     
-    # ---- CLASE DE SERVICIOS (CON URLs PÚBLICAS) ----
     class BackgroundServices:
         def __init__(self):
             self.processes = {}
 
         def get_tunnel_url(self, port):
-            """Lanza localtunnel y atrapa la URL pública generada."""
             try:
                 p = subprocess.Popen(f"lt --port {port}", shell=True, stdout=subprocess.PIPE, text=True)
-                url_line = p.stdout.readline() # Espera y lee la primera línea
+                url_line = p.stdout.readline()
                 if "your url is:" in url_line.lower():
                     return url_line.split("your url is:")[1].strip()
-                return f"Túnel activo en puerto {port}, revisa consola."
+                return f"Túnel activo en puerto {port}"
             except Exception as e:
-                return f"Error creando túnel: {e}"
+                return f"Error: {e}"
 
         def start_filebrowser(self, port=8080, root_dir=KAGGLE_WORK_DIR):
             if "filebrowser" not in self.processes or self.processes["filebrowser"].poll() is not None:
                 cmd = f"filebrowser -p {port} -r {root_dir} --noauth"
                 self.processes["filebrowser"] = subprocess.Popen(cmd, shell=True)
-            
-            public_url = self.get_tunnel_url(port)
-            return f"✅ Activo\n🌐 Link: {public_url}"
+            return f"✅ Activo\n🌐 Link: {self.get_tunnel_url(port)}"
 
         def start_tensorboard(self, logdir=LOGS_DIR, port=6006):
             if "tensorboard" not in self.processes or self.processes["tensorboard"].poll() is not None:
                 cmd = f"tensorboard --logdir={logdir} --port={port} --bind_all"
                 self.processes["tensorboard"] = subprocess.Popen(cmd, shell=True)
-                
-            public_url = self.get_tunnel_url(port)
-            return f"✅ Activo\n🌐 Link: {public_url}"
+            return f"✅ Activo\n🌐 Link: {self.get_tunnel_url(port)}"
 
     services = BackgroundServices()
 
-    # ---- FUNCIONES MOCK BACKEND ----
     def scan_models():
         pth_files, index_files = [], []
         if os.path.exists(LOGS_DIR):
@@ -102,8 +111,8 @@ def launch_ui():
                         pth_files.append(os.path.join(root, file))
                     elif file.endswith(".index"):
                         index_files.append(os.path.join(root, file))
-        if not pth_files: pth_files = ["No se encontraron modelos .pth"]
-        if not index_files: index_files = ["No se encontraron índices .index"]
+        if not pth_files: pth_files = ["No hay modelos .pth"]
+        if not index_files: index_files = ["No hay índices .index"]
         return gr.update(choices=pth_files, value=pth_files[0]), gr.update(choices=index_files, value=index_files[0])
 
     def process_dataset(files, ds_name, sr, slice_m, max_sil, norm, denoise):
@@ -117,7 +126,7 @@ def launch_ui():
         time.sleep(2)
         return "✅ Características extraídas."
 
-    def run_training_pipeline(m_name, sr, vocoder, epochs, batch, prec, save_ev, save_lat, save_sm, cache, c_g, c_d, progress=gr.Progress()):
+    def run_training(m_name, sr, vocoder, epochs, batch, prec, save_ev, save_lat, save_sm, cache, c_g, c_d, progress=gr.Progress()):
         gr.Info(f"🚀 Entrenando {m_name} | Épocas: {epochs}")
         m_dir = os.path.join(LOGS_DIR, m_name)
         os.makedirs(m_dir, exist_ok=True)
@@ -135,21 +144,17 @@ def launch_ui():
         gr.Info("🎙️ Convirtiendo audio...")
         time.sleep(2)
         return audio, "✅ Inferencia completada."
-
-    # ---- INTERFAZ ----
-    theme = gr.themes.Soft(primary_hue="violet", secondary_hue="indigo")
     
-    # Hemos movido el 'theme' fuera de la llamada inicial a Blocks para evitar el warning rojo.
-    with gr.Blocks(theme=theme, title="AriaVC Studio Pro") as aria_ui:
+    # Se eliminó por completo el parámetro 'theme' conflictivo
+    with gr.Blocks(title="AriaVC Studio Pro") as aria_ui:
         gr.Markdown("# 🎵 AriaVC Studio Pro - Todo en Uno")
         
         with gr.Tabs():
-            # TAB 1: PREPROCESAMIENTO
             with gr.TabItem("🎙️ 1. Dataset (Auto-Slicing)"):
                 with gr.Row():
                     with gr.Column():
                         ds_name = gr.Textbox(value="Mi_Modelo_Vocal", label="Nombre del Modelo")
-                        ds_file = gr.File(file_count="single", label="Sube tu Audio Largo", file_types=["audio"])
+                        ds_file = gr.File(file_count="single", label="Sube tu Audio", file_types=["audio"])
                         sr_target = gr.Radio(choices=["32k", "40k", "48k"], value="40k", label="Sample Rate")
                     with gr.Column():
                         slice_m = gr.Dropdown(choices=["Silero-VAD", "Librosa-RMS"], value="Silero-VAD", label="Auto-Cortado")
@@ -160,10 +165,9 @@ def launch_ui():
                 out_process = gr.Textbox(label="Estado")
                 btn_process.click(process_dataset, [ds_file, ds_name, sr_target, slice_m, max_sil, norm, denoise], out_process)
 
-            # TAB 2: EXTRACCIÓN
             with gr.TabItem("🧠 2. Extracción (F0 & Embeddings)"):
                 with gr.Row():
-                    ds_ref = gr.Textbox(value="Mi_Modelo_Vocal", label="Nombre del Modelo")
+                    ds_ref = gr.Textbox(value="Mi_Modelo_Vocal", label="Nombre")
                     embedder = gr.Dropdown(choices=["Whisper-large-v3", "ContentVec-500k"], value="Whisper-large-v3", label="Embedder")
                     f0_method = gr.Dropdown(choices=["FCPE", "RMVPE"], value="FCPE", label="Pitch")
                     gpu_extract = gr.Checkbox(value=True, label="Usar GPU")
@@ -171,7 +175,6 @@ def launch_ui():
                 out_extract = gr.Textbox(label="Estado")
                 btn_extract.click(extract_features, [ds_ref, embedder, f0_method, gpu_extract], out_extract)
 
-            # TAB 3: ENTRENAMIENTO
             with gr.TabItem("🚀 3. Entrenamiento"):
                 with gr.Row():
                     m_name_train = gr.Textbox(value="Mi_Modelo_Vocal", label="Nombre")
@@ -181,18 +184,17 @@ def launch_ui():
                     epochs = gr.Slider(10, 2000, 300, label="Épocas Totales")
                     batch = gr.Slider(1, 64, 8, label="Batch Size")
                     prec = gr.Dropdown(choices=["fp16", "bf16", "tf32", "fp32"], value="fp16", label="Precisión")
-                with gr.Accordion("📦 Guardado y Pretrains", open=False):
+                with gr.Accordion("📦 Config Avanzada", open=False):
                     save_ev = gr.Slider(1, 100, 10, label="Guardar cada X Épocas")
                     save_lat = gr.Checkbox(value=True, label="Guardar SOLO el último")
-                    save_sm = gr.Checkbox(value=True, label="Extraer .pth de inferencia")
+                    save_sm = gr.Checkbox(value=True, label="Extraer .pth")
                     cache = gr.Checkbox(value=False, label="Cache VRAM")
                     c_g = gr.Textbox(label="Custom G")
                     c_d = gr.Textbox(label="Custom D")
                 btn_train = gr.Button("🚀 Iniciar Entrenamiento", variant="primary")
                 out_train = gr.Textbox(label="Consola")
-                btn_train.click(run_training_pipeline, [m_name_train, sr_train, vocoder, epochs, batch, prec, save_ev, save_lat, save_sm, cache, c_g, c_d], out_train)
+                btn_train.click(run_training, [m_name_train, sr_train, vocoder, epochs, batch, prec, save_ev, save_lat, save_sm, cache, c_g, c_d], out_train)
 
-            # TAB 4: ÍNDICE
             with gr.TabItem("📊 4. Índice (FAISS)"):
                 with gr.Row():
                     faiss_model = gr.Textbox(value="Mi_Modelo_Vocal", label="Nombre")
@@ -203,12 +205,11 @@ def launch_ui():
                 out_idx = gr.Textbox(label="Estado")
                 btn_idx.click(build_index, [faiss_model, algo, pca, nlist], out_idx)
 
-            # TAB 5: INFERENCIA
             with gr.TabItem("🎧 5. Inferencia"):
                 with gr.Row():
                     with gr.Column():
-                        inf_model = gr.Dropdown(choices=[], label="Modelo (.pth)", interactive=True)
-                        inf_index = gr.Dropdown(choices=[], label="Índice (.index)", interactive=True)
+                        inf_model = gr.Dropdown(choices=[], label="Modelo (.pth)")
+                        inf_index = gr.Dropdown(choices=[], label="Índice (.index)")
                         btn_ref = gr.Button("🔄 Refrescar")
                         inf_audio = gr.Audio(type="filepath", label="Audio Base")
                     with gr.Column():
@@ -222,7 +223,6 @@ def launch_ui():
                 btn_ref.click(scan_models, outputs=[inf_model, inf_index])
                 btn_inf.click(run_inference, [inf_model, inf_index, inf_audio, inf_pitch, inf_f0, inf_rate, inf_prot], [out_audio, out_log])
 
-            # TAB 6: SERVICIOS
             with gr.TabItem("🌐 6. Servicios"):
                 with gr.Row():
                     btn_fb = gr.Button("Archivos (Port 8080)")
@@ -233,13 +233,9 @@ def launch_ui():
                     out_tb = gr.Textbox(label="Tensorboard")
                     btn_tb.click(lambda: services.start_tensorboard(), outputs=out_tb)
 
-        # Sincronización de nombres
         ds_name.change(fn=lambda x: (x, x, x), inputs=ds_name, outputs=[ds_ref, m_name_train, faiss_model])
-        
-        # Load indentado correctamente
         aria_ui.load(fn=scan_models, outputs=[inf_model, inf_index])
         
-    # Launch con inline=False y el theme asignado aquí para evitar el warning
     aria_ui.queue().launch(share=True, show_error=True, inline=False)
 
 if __name__ == "__main__":
