@@ -41,6 +41,10 @@ def setup_environment():
     if not shutil.which("filebrowser"):
         run_cmd("curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash", "Instalando Filebrowser")
 
+    # === DESCARGAR REQUIREMENTS DESDE GITHUB ===
+    github_raw_url = "https://raw.githubusercontent.com/aimeovv3-hue/AriaVC/main/requirements.txt"
+    run_cmd(f"wget -q -O requirements.txt {github_raw_url}", "Descargando requirements.txt desde GitHub")
+
     if os.path.exists("requirements.txt"):
         run_cmd(f"{sys.executable} -m pip install -r requirements.txt", "Instalando dependencias de Python (requirements.txt)")
     else:
@@ -54,32 +58,37 @@ def launch_ui():
     print("\n[AriaVC] Cargando la interfaz gráfica...")
     import gradio as gr
     
-    # ---- CLASE DE SERVICIOS ----
+    # ---- CLASE DE SERVICIOS (CON URLs PÚBLICAS) ----
     class BackgroundServices:
         def __init__(self):
             self.processes = {}
 
-        def start_filebrowser(self, port=8080, root_dir=KAGGLE_WORK_DIR):
-            if "filebrowser" in self.processes and self.processes["filebrowser"].poll() is None:
-                return "Filebrowser ya está en ejecución."
-            cmd = f"filebrowser -p {port} -r {root_dir} --noauth"
+        def get_tunnel_url(self, port):
+            """Lanza localtunnel y atrapa la URL pública generada."""
             try:
-                p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                self.processes["filebrowser"] = p
-                return f"Filebrowser iniciado en puerto {port}"
+                p = subprocess.Popen(f"lt --port {port}", shell=True, stdout=subprocess.PIPE, text=True)
+                url_line = p.stdout.readline() # Espera y lee la primera línea
+                if "your url is:" in url_line.lower():
+                    return url_line.split("your url is:")[1].strip()
+                return f"Túnel activo en puerto {port}, revisa consola."
             except Exception as e:
-                return f"Error: {str(e)}"
+                return f"Error creando túnel: {e}"
+
+        def start_filebrowser(self, port=8080, root_dir=KAGGLE_WORK_DIR):
+            if "filebrowser" not in self.processes or self.processes["filebrowser"].poll() is not None:
+                cmd = f"filebrowser -p {port} -r {root_dir} --noauth"
+                self.processes["filebrowser"] = subprocess.Popen(cmd, shell=True)
+            
+            public_url = self.get_tunnel_url(port)
+            return f"✅ Activo\n🌐 Link: {public_url}"
 
         def start_tensorboard(self, logdir=LOGS_DIR, port=6006):
-            if "tensorboard" in self.processes and self.processes["tensorboard"].poll() is None:
-                return "Tensorboard ya está en ejecución."
-            cmd = f"tensorboard --logdir={logdir} --port={port} --bind_all"
-            try:
-                p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                self.processes["tensorboard"] = p
-                return f"Tensorboard iniciado en puerto {port}"
-            except Exception as e:
-                return f"Error: {str(e)}"
+            if "tensorboard" not in self.processes or self.processes["tensorboard"].poll() is not None:
+                cmd = f"tensorboard --logdir={logdir} --port={port} --bind_all"
+                self.processes["tensorboard"] = subprocess.Popen(cmd, shell=True)
+                
+            public_url = self.get_tunnel_url(port)
+            return f"✅ Activo\n🌐 Link: {public_url}"
 
     services = BackgroundServices()
 
@@ -130,7 +139,8 @@ def launch_ui():
     # ---- INTERFAZ ----
     theme = gr.themes.Soft(primary_hue="violet", secondary_hue="indigo")
     
-    with gr.Blocks(theme=theme, title="AriaVC Studio Pro") as aria_ui:
+    # Hemos movido el 'theme' fuera de la llamada inicial a Blocks para evitar el warning rojo.
+    with gr.Blocks(title="AriaVC Studio Pro") as aria_ui:
         gr.Markdown("# 🎵 AriaVC Studio Pro - Todo en Uno")
         
         with gr.Tabs():
@@ -223,15 +233,14 @@ def launch_ui():
                     out_tb = gr.Textbox(label="Tensorboard")
                     btn_tb.click(lambda: services.start_tensorboard(), outputs=out_tb)
 
-        # === CORRECCIONES APLICADAS AQUÍ ===
-        # 1. Sincronización de nombres entre todas las pestañas (se te olvidó un nombre)
+        # Sincronización de nombres
         ds_name.change(fn=lambda x: (x, x, x), inputs=ds_name, outputs=[ds_ref, m_name_train, faiss_model])
         
-        # 2. El Load AHORA está indentado DENTRO del bloque `with gr.Blocks(...)`
+        # Load indentado correctamente
         aria_ui.load(fn=scan_models, outputs=[inf_model, inf_index])
         
-    # El launch debe quedar AFUERA del bloque `with`
-    aria_ui.queue().launch(share=True, show_error=True, inline=False)
+    # Launch con inline=False y el theme asignado aquí para evitar el warning
+    aria_ui.queue().launch(share=True, show_error=True, inline=False, theme=theme)
 
 if __name__ == "__main__":
     setup_environment()
