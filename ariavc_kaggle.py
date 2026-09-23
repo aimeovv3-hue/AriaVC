@@ -140,7 +140,7 @@ def launch_ui():
     theme = gr.themes.Soft(primary_hue="violet", secondary_hue="indigo")
     
     # Hemos movido el 'theme' fuera de la llamada inicial a Blocks para evitar el warning rojo.
-    with gr.Blocks(title="AriaVC Studio Pro") as aria_ui:
+    with gr.Blocks(theme=theme, title="AriaVC Studio Pro") as aria_ui:
         gr.Markdown("# 🎵 AriaVC Studio Pro - Todo en Uno")
         
         with gr.Tabs():
@@ -240,7 +240,7 @@ def launch_ui():
         aria_ui.load(fn=scan_models, outputs=[inf_model, inf_index])
         
     # Launch con inline=False y el theme asignado aquí para evitar el warning
-    aria_ui.queue().launch(share=True, show_error=True, inline=False, theme=theme)
+    aria_ui.queue().launch(share=True, show_error=True, inline=False)
 
 if __name__ == "__main__":
     setup_environment()
