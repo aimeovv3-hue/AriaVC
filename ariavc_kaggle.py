@@ -231,7 +231,7 @@ def launch_ui():
         aria_ui.load(fn=scan_models, outputs=[inf_model, inf_index])
         
     # El launch debe quedar AFUERA del bloque `with`
-    aria_ui.queue().launch(share=True, show_error=True)
+    aria_ui.queue().launch(share=True, show_error=True, inline=False)
 
 if __name__ == "__main__":
     setup_environment()
