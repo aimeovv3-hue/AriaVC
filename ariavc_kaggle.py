@@ -24,15 +24,17 @@ def setup_environment():
     print("      🚀 INICIANDO ARIAVC STUDIO        ")
     print("========================================")
     
-    global KAGGLE_WORK_DIR, LOGS_DIR, DATASETS_DIR
+    global KAGGLE_WORK_DIR, LOGS_DIR, DATASETS_DIR, BACKEND_DIR
     KAGGLE_WORK_DIR = "/kaggle/working"
     LOGS_DIR = os.path.join(KAGGLE_WORK_DIR, "logs")
     DATASETS_DIR = os.path.join(KAGGLE_WORK_DIR, "datasets")
+    BACKEND_DIR = os.path.join(KAGGLE_WORK_DIR, "rvc_backend")
+    
     os.makedirs(LOGS_DIR, exist_ok=True)
     os.makedirs(DATASETS_DIR, exist_ok=True)
 
     if not shutil.which("ffmpeg"):
-        run_cmd("apt-get update && apt-get install -y ffmpeg aria2 curl", "Instalando utilidades de sistema")
+        run_cmd("apt-get update && apt-get install -y ffmpeg aria2 curl git", "Instalando utilidades de sistema")
     
     if not shutil.which("lt"):
         run_cmd("curl -fsSL https://deb.nodesource.com/setup_18.x | bash -", "Configurando Node.js")
@@ -42,7 +44,11 @@ def setup_environment():
     if not shutil.which("filebrowser"):
         run_cmd("curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash", "Instalando Filebrowser")
 
-    # CREAR REQUIREMENTS LOCALMENTE PARA EVITAR EL CACHÉ DE GITHUB
+    # Descargar el motor base RVC para las funciones pesadas
+    if not os.path.exists(BACKEND_DIR):
+        run_cmd(f"git clone https://github.com/IAHispano/Applio.git {BACKEND_DIR}", "Clonando motor base RVC")
+
+    # CREAR REQUIREMENTS LOCALMENTE
     dependencias = """gradio>=4.0.0
 torch>=2.0.0
 torchaudio>=2.0.0
@@ -60,7 +66,8 @@ tqdm
 torchcrepe>=0.0.20
 fairseq>=0.12.2
 transformers>=4.35.0
-accelerate>=0.24.0"""
+accelerate>=0.24.0
+torchfcpe"""
     
     with open("requirements_local.txt", "w") as f:
         f.write(dependencias)
@@ -118,8 +125,42 @@ def launch_ui():
     def process_dataset(files, ds_name, sr, slice_m, max_sil, norm, denoise):
         if not files: return "Error: Dataset vacío."
         gr.Info("📁 Procesando audio y cortando silencios...")
-        time.sleep(2)
-        return f"✅ Auto-slicing completado para {ds_name}."
+        
+        try:
+            from pydub import AudioSegment
+            from pydub.silence import split_on_silence
+            
+            # Obtener la ruta real del archivo subido
+            file_path = getattr(files, "name", files)
+            
+            # Crear directorio de salida
+            out_dir = os.path.join(DATASETS_DIR, ds_name)
+            if os.path.exists(out_dir):
+                shutil.rmtree(out_dir)
+            os.makedirs(out_dir, exist_ok=True)
+            
+            # Cargar archivo de audio original
+            audio = AudioSegment.from_file(file_path)
+            
+            # Algoritmo para separar frases largas conservando naturalidad
+            chunks = split_on_silence(
+                audio,
+                min_silence_len=int(max_sil),        # Milisegundos de silencio requeridos para cortar (usa tu slider)
+                silence_thresh=audio.dBFS - 16,      # Umbral de silencio dinámico según el volumen del audio
+                keep_silence=400                     # Mantiene 400ms en los bordes para no cortar secamente
+            )
+            
+            if not chunks:
+                return "⚠️ Error: No se detectaron silencios o el umbral es muy estricto."
+                
+            # Exportar fragmentos individuales a la carpeta
+            for i, chunk in enumerate(chunks):
+                chunk.export(os.path.join(out_dir, f"{ds_name}_{i:04d}.wav"), format="wav")
+                
+            return f"✅ Auto-slicing completado. {len(chunks)} frases guardadas en la carpeta '{ds_name}'."
+            
+        except Exception as e:
+            return f"❌ Error en el procesamiento: {str(e)}"
 
     def extract_features(ds_name, embedder, f0_method, gpu):
         gr.Info(f"🔍 Extrayendo con {embedder} y {f0_method}...")
@@ -145,7 +186,6 @@ def launch_ui():
         time.sleep(2)
         return audio, "✅ Inferencia completada."
     
-    # Se eliminó por completo el parámetro 'theme' conflictivo
     with gr.Blocks(title="AriaVC Studio Pro") as aria_ui:
         gr.Markdown("# 🎵 AriaVC Studio Pro - Todo en Uno")
         
@@ -154,7 +194,8 @@ def launch_ui():
                 with gr.Row():
                     with gr.Column():
                         ds_name = gr.Textbox(value="Mi_Modelo_Vocal", label="Nombre del Modelo")
-                        ds_file = gr.File(file_count="single", label="Sube tu Audio", file_types=["audio"])
+                        # Modificado a tipo 'filepath' para facilitar el acceso en pydub
+                        ds_file = gr.File(file_count="single", label="Sube tu Audio", file_types=["audio"], type="filepath")
                         sr_target = gr.Radio(choices=["32k", "40k", "48k"], value="40k", label="Sample Rate")
                     with gr.Column():
                         slice_m = gr.Dropdown(choices=["Silero-VAD", "Librosa-RMS"], value="Silero-VAD", label="Auto-Cortado")
