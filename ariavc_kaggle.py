@@ -5,7 +5,6 @@ import subprocess
 import shutil
 import warnings
 
-# Ocultar advertencias cosméticas
 warnings.filterwarnings("ignore")
 
 # ==========================================
@@ -21,7 +20,7 @@ def run_cmd(cmd, desc):
 
 def setup_environment():
     print("========================================")
-    print("      🚀 INICIANDO ARIAVC STUDIO V4      ")
+    print("      🚀 INICIANDO ARIAVC STUDIO V4.1    ")
     print("========================================")
     
     global KAGGLE_WORK_DIR, LOGS_DIR, DATASETS_DIR, BACKEND_DIR
@@ -59,10 +58,9 @@ torchcrepe fairseq transformers accelerate torchfcpe"""
 # 2. CONSOLA EN TIEMPO REAL (ESPEJO KAGGLE + UI)
 # ==========================================
 def stream_cmd_realtime(cmd):
-    """Ejecuta y muestra TODO en Kaggle Y en Gradio al mismo tiempo"""
     msg_inicio = f"\n[AriaVC Backend] 🚀 Ejecutando:\n{cmd}\n"
     print(msg_inicio)
-    sys.stdout.flush() # Forzar a Kaggle a mostrarlo inmediatamente
+    sys.stdout.flush() 
     
     process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     
@@ -70,11 +68,8 @@ def stream_cmd_realtime(cmd):
     yield log_output
     
     for line in iter(process.stdout.readline, ''):
-        # 1. Imprimir en la consola nativa de Kaggle
         sys.stdout.write(line)
         sys.stdout.flush() 
-        
-        # 2. Enviar a la caja de texto de Gradio
         log_output += line
         yield log_output 
         
@@ -100,20 +95,16 @@ def launch_ui():
 
         def start_service(self, name, cmd_service, port):
             if name not in self.processes or self.processes[name].poll() is not None:
-                # 1. Iniciar el servicio (Filebrowser o Tensorboard)
                 self.processes[name] = subprocess.Popen(cmd_service, shell=True)
                 time.sleep(2)
                 
-                # 2. Iniciar Localtunnel para que genere el link de Kaggle
                 lt_name = f"lt_{name}"
                 print(f"\nGenerando link para {name.upper()}...")
                 self.processes[lt_name] = subprocess.Popen(f"lt --port {port}", shell=True, stdout=subprocess.PIPE, text=True)
                 
-                # Leer el link generado
                 url_line = self.processes[lt_name].stdout.readline()
                 url = url_line.split("is:")[-1].strip() if "is:" in url_line else "URL no encontrada"
                 
-                # 3. IMPRIMIR EN GRANDE EN LA CONSOLA DE KAGGLE PARA DAR CLIC DIRECTO
                 print(f"\n" + "="*60)
                 print(f" 🌐 LINK DIRECTO PARA {name.upper()}: {url}")
                 print("="*60 + "\n")
@@ -139,16 +130,15 @@ def launch_ui():
             idx = [os.path.join(r, f) for r, _, fs in os.walk(LOGS_DIR) for f in fs if f.endswith(".index")] or idx
         return gr.update(choices=pth, value=pth[0]), gr.update(choices=idx, value=idx[0])
 
-    def process_dataset(files, ds_name, slice_length):
-        if not files: yield "❌ Error: Dataset vacío."
+    def process_dataset(audio_path, ds_name, slice_length):
+        if not audio_path: yield "❌ Error: No subiste ningún audio."
         yield f"📁 Cortando audio en fragmentos de {slice_length}s..."
         try:
-            file_path = getattr(files, "name", files)
             out_dir = os.path.join(DATASETS_DIR, ds_name)
             if os.path.exists(out_dir): shutil.rmtree(out_dir)
             os.makedirs(out_dir, exist_ok=True)
             
-            audio = AudioSegment.from_file(file_path)
+            audio = AudioSegment.from_file(audio_path)
             chunks = make_chunks(audio, int(slice_length) * 1000)
             
             for i, chunk in enumerate(chunks):
@@ -183,12 +173,13 @@ def launch_ui():
         else: yield None, "❌ Fallo al generar el audio. Revisa la consola."
 
     with gr.Blocks(title="AriaVC Studio Pro", theme=gr.themes.Base()) as aria_ui:
-        gr.Markdown("# 🎵 AriaVC Studio Pro V4 - Sincronizado con Kaggle")
+        gr.Markdown("# 🎵 AriaVC Studio Pro V4.1 - Sincronizado con Kaggle")
         
         with gr.Tabs():
             with gr.TabItem("🎙️ 1. Dataset (Auto-Cortado Rápido)"):
                 with gr.Row():
-                    ds_file = gr.File(file_count="single", label="Sube tu Audio (Horas/Minutos)", type="filepath")
+                    # Aquí está el cambio: Ahora es gr.Audio
+                    ds_file = gr.Audio(type="filepath", label="Sube tu Audio de Dataset (WAV/FLAC/MP3)")
                     with gr.Column():
                         ds_name = gr.Textbox(value="Mi_Modelo_Vocal", label="Nombre del Modelo")
                         slice_length = gr.Slider(5, 20, 12, step=1, label="Duración por fragmento (Segundos)")
