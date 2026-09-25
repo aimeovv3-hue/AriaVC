@@ -20,7 +20,7 @@ def run_cmd(cmd, desc):
 
 def setup_environment():
     print("========================================")
-    print("      🚀 INICIANDO ARIAVC STUDIO V4.1    ")
+    print("      🚀 INICIANDO ARIAVC STUDIO V5      ")
     print("========================================")
     
     global KAGGLE_WORK_DIR, LOGS_DIR, DATASETS_DIR, BACKEND_DIR
@@ -150,21 +150,38 @@ def launch_ui():
             yield f"❌ Error: {str(e)}"
 
     def extract_features(ds_name, embedder, f0_method, gpu):
-        cmd = f"cd {BACKEND_DIR} && python core/extract_f0.py --dataset_path {os.path.join(DATASETS_DIR, ds_name)} --f0_method {f0_method.lower()} --embedder {embedder.lower()}"
-        yield from stream_cmd_realtime(cmd)
+        emb_name = "whisper-large-v3" if "whisper" in embedder.lower() else "contentvec"
+        
+        # 1. Preprocesamiento (Obligatorio en RVC antes de extraer)
+        yield "🔄 [Paso 1/2] Preprocesando Dataset...\n"
+        cmd_pre = f"cd {BACKEND_DIR} && python core.py preprocess --model_name '{ds_name}' --dataset_path '{os.path.join(DATASETS_DIR, ds_name)}'"
+        for log in stream_cmd_realtime(cmd_pre): yield log
+        
+        # 2. Extracción (Con fallbacks || por si la versión de Applio cambia la sintaxis)
+        yield "\n🔄 [Paso 2/2] Extrayendo Pitch y Features...\n"
+        cmd_ex = f"cd {BACKEND_DIR} && python core.py extract --model_name '{ds_name}' --f0method {f0_method.lower()} --embedder_model {emb_name} || python core.py extract --model_name '{ds_name}' --f0method {f0_method.lower()} --embedder {emb_name} || python core.py extract --model_name '{ds_name}' --f0method {f0_method.lower()}"
+        for log in stream_cmd_realtime(cmd_ex): yield log
 
     def run_training(m_name, sr, vocoder, epochs, batch, save_ev, save_lat, save_sm, save_every_weights):
-        cmd = f"cd {BACKEND_DIR} && python core/train.py --model_name {m_name} --total_epoch {epochs} --batch_size {batch} --save_every_epoch {save_ev} --save_only_latest {int(save_lat)} --save_every_weights {int(save_every_weights)}"
-        yield from stream_cmd_realtime(cmd)
+        # Convertir booleanos a strings para el CLI
+        s_lat = "True" if save_lat else "False"
+        s_w = "True" if save_every_weights else "False"
+        
+        cmd_tr = f"cd {BACKEND_DIR} && python core.py train --model_name '{m_name}' --total_epoch {epochs} --batch_size {batch} --save_every_epoch {save_ev} --save_only_latest {s_lat} --save_every_weights {s_w} || python core.py train --model_name '{m_name}' --total_epoch {epochs} --batch_size {batch} --save_every_epoch {save_ev}"
+        yield from stream_cmd_realtime(cmd_tr)
 
     def build_index(m_name, algo):
-        cmd = f"cd {BACKEND_DIR} && python core/index.py --model_name {m_name} --index_algorithm {algo}"
-        yield from stream_cmd_realtime(cmd)
+        cmd_idx = f"cd {BACKEND_DIR} && python core.py index --model_name '{m_name}'"
+        yield from stream_cmd_realtime(cmd_idx)
 
     def run_inference(m_path, idx_path, audio, pitch, f0, inf_embedder, inf_format):
         if not audio: yield None, "❌ Falta audio base"
         out_path = os.path.join(KAGGLE_WORK_DIR, f"output_{int(time.time())}.{inf_format}")
-        cmd = f"cd {BACKEND_DIR} && python core/infer.py --model_path {m_path} --index_path {idx_path} --audio_path {audio} --export_format {inf_format} --f0_method {f0.lower()} --embedder {inf_embedder.lower()} --output_path {out_path} --pitch {pitch}"
+        
+        # Applio necesita solo el nombre del modelo, no la ruta completa
+        m_name_only = os.path.basename(m_path).replace(".pth", "")
+        
+        cmd = f"cd {BACKEND_DIR} && python core.py infer --model_name '{m_name_only}' --index_path '{idx_path}' --audio_path '{audio}' --export_format {inf_format} --f0method {f0.lower()} --pitch {pitch} --output_path '{out_path}' || python core.py infer --model_name '{m_name_only}' --index_path '{idx_path}' --input_path '{audio}' --export_format {inf_format} --f0method {f0.lower()} --pitch {pitch} --output_path '{out_path}'"
         
         for log in stream_cmd_realtime(cmd):
             yield None, log
@@ -173,12 +190,11 @@ def launch_ui():
         else: yield None, "❌ Fallo al generar el audio. Revisa la consola."
 
     with gr.Blocks(title="AriaVC Studio Pro", theme=gr.themes.Base()) as aria_ui:
-        gr.Markdown("# 🎵 AriaVC Studio Pro V4.1 - Sincronizado con Kaggle")
+        gr.Markdown("# 🎵 AriaVC Studio Pro V5 - Core Fix Sincronizado")
         
         with gr.Tabs():
             with gr.TabItem("🎙️ 1. Dataset (Auto-Cortado Rápido)"):
                 with gr.Row():
-                    # Aquí está el cambio: Ahora es gr.Audio
                     ds_file = gr.Audio(type="filepath", label="Sube tu Audio de Dataset (WAV/FLAC/MP3)")
                     with gr.Column():
                         ds_name = gr.Textbox(value="Mi_Modelo_Vocal", label="Nombre del Modelo")
