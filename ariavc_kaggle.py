@@ -20,7 +20,7 @@ def run_cmd(cmd, desc):
 
 def setup_environment():
     print("========================================")
-    print("      🚀 INICIANDO ARIAVC STUDIO V5      ")
+    print("      🚀 INICIANDO ARIAVC STUDIO V6      ")
     print("========================================")
     
     global KAGGLE_WORK_DIR, LOGS_DIR, DATASETS_DIR, BACKEND_DIR
@@ -33,7 +33,7 @@ def setup_environment():
     os.makedirs(DATASETS_DIR, exist_ok=True)
 
     if not shutil.which("ffmpeg"):
-        run_cmd("apt-get update && apt-get install -y ffmpeg aria2 curl git", "Instalando utilidades")
+        run_cmd("apt-get update && apt-get install -y ffmpeg aria2 curl git", "Instalando utilidades del sistema")
     
     if not shutil.which("lt"):
         run_cmd("curl -fsSL https://deb.nodesource.com/setup_18.x | bash -", "Configurando Node.js")
@@ -45,14 +45,13 @@ def setup_environment():
     if not os.path.exists(BACKEND_DIR):
         run_cmd(f"git clone https://github.com/IAHispano/Applio.git {BACKEND_DIR}", "Clonando motor base RVC")
 
-    dependencias = """gradio>=4.0.0
-torch torchaudio torchvision tensorboard
-numpy scipy librosa soundfile pydub
-faiss-cpu faiss-gpu requests tqdm
-torchcrepe fairseq transformers accelerate torchfcpe"""
+    # INSTALACIÓN MASIVA Y OFICIAL: Descarga todo lo que pide Applio por defecto
+    run_cmd(f"{sys.executable} -m pip install -r {BACKEND_DIR}/requirements.txt", "Instalando dependencias COMPLETAS oficiales de Applio")
     
-    with open("requirements_local.txt", "w") as f: f.write(dependencias)
-    run_cmd(f"{sys.executable} -m pip install -q -r requirements_local.txt", "Instalando dependencias de Python")
+    # Instalamos solo lo extra necesario para nuestra interfaz
+    dependencias_ui = "gradio>=4.0.0\npydub\ntensorboardX\n"
+    with open("requirements_ui.txt", "w") as f: f.write(dependencias_ui)
+    run_cmd(f"{sys.executable} -m pip install -q -r requirements_ui.txt", "Instalando complementos de la Interfaz Custom")
 
 # ==========================================
 # 2. CONSOLA EN TIEMPO REAL (ESPEJO KAGGLE + UI)
@@ -152,18 +151,15 @@ def launch_ui():
     def extract_features(ds_name, embedder, f0_method, gpu):
         emb_name = "whisper-large-v3" if "whisper" in embedder.lower() else "contentvec"
         
-        # 1. Preprocesamiento (Obligatorio en RVC antes de extraer)
         yield "🔄 [Paso 1/2] Preprocesando Dataset...\n"
         cmd_pre = f"cd {BACKEND_DIR} && python core.py preprocess --model_name '{ds_name}' --dataset_path '{os.path.join(DATASETS_DIR, ds_name)}'"
         for log in stream_cmd_realtime(cmd_pre): yield log
         
-        # 2. Extracción (Con fallbacks || por si la versión de Applio cambia la sintaxis)
         yield "\n🔄 [Paso 2/2] Extrayendo Pitch y Features...\n"
         cmd_ex = f"cd {BACKEND_DIR} && python core.py extract --model_name '{ds_name}' --f0method {f0_method.lower()} --embedder_model {emb_name} || python core.py extract --model_name '{ds_name}' --f0method {f0_method.lower()} --embedder {emb_name} || python core.py extract --model_name '{ds_name}' --f0method {f0_method.lower()}"
         for log in stream_cmd_realtime(cmd_ex): yield log
 
     def run_training(m_name, sr, vocoder, epochs, batch, save_ev, save_lat, save_sm, save_every_weights):
-        # Convertir booleanos a strings para el CLI
         s_lat = "True" if save_lat else "False"
         s_w = "True" if save_every_weights else "False"
         
@@ -178,7 +174,6 @@ def launch_ui():
         if not audio: yield None, "❌ Falta audio base"
         out_path = os.path.join(KAGGLE_WORK_DIR, f"output_{int(time.time())}.{inf_format}")
         
-        # Applio necesita solo el nombre del modelo, no la ruta completa
         m_name_only = os.path.basename(m_path).replace(".pth", "")
         
         cmd = f"cd {BACKEND_DIR} && python core.py infer --model_name '{m_name_only}' --index_path '{idx_path}' --audio_path '{audio}' --export_format {inf_format} --f0method {f0.lower()} --pitch {pitch} --output_path '{out_path}' || python core.py infer --model_name '{m_name_only}' --index_path '{idx_path}' --input_path '{audio}' --export_format {inf_format} --f0method {f0.lower()} --pitch {pitch} --output_path '{out_path}'"
@@ -190,7 +185,7 @@ def launch_ui():
         else: yield None, "❌ Fallo al generar el audio. Revisa la consola."
 
     with gr.Blocks(title="AriaVC Studio Pro", theme=gr.themes.Base()) as aria_ui:
-        gr.Markdown("# 🎵 AriaVC Studio Pro V5 - Core Fix Sincronizado")
+        gr.Markdown("# 🎵 AriaVC Studio Pro V6 - Instalación Masiva")
         
         with gr.Tabs():
             with gr.TabItem("🎙️ 1. Dataset (Auto-Cortado Rápido)"):
